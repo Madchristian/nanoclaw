@@ -1,0 +1,12 @@
+skills:
+  - discord
+  - telegram
+apply_order:
+  - telegram
+  - discord
+resolved_at: 2026-02-17T22:51:38.813Z
+tested: true
+test_passed: true
+resolution_source: generated
+input_hashes: {}
+output_hash: ""
