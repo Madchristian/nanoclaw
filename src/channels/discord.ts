@@ -33,7 +33,7 @@ export class DiscordChannel implements Channel {
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.DirectMessages,
       ],
-      partials: [Partials.Channel],
+      partials: [Partials.Channel, Partials.Message, Partials.GuildMember],
     });
   }
 
@@ -46,9 +46,20 @@ export class DiscordChannel implements Channel {
       });
 
       this.client.on(Events.MessageCreate, async (message: Message) => {
+        // Fetch partial messages (DMs often arrive as partials)
+        if (message.partial) {
+          try {
+            await message.fetch();
+          } catch (err) {
+            logger.warn({ err }, 'Failed to fetch partial message');
+            return;
+          }
+        }
+
         if (message.author.id === this.client.user?.id) return;
         // Allow messages from whitelisted bots (e.g., OpenClaw), ignore all others
         if (message.author.bot && !this.botWhitelist.has(message.author.id)) return;
+
 
         const chatJid = `discord:${message.channelId}`;
         const timestamp = message.createdAt.toISOString();
