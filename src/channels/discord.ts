@@ -65,6 +65,14 @@ export class DiscordChannel implements Channel {
         updateChatName(chatJid, channelName);
         this.opts.onChatMetadata(chatJid, timestamp, channelName);
 
+        // Translate @bot mentions into trigger pattern format
+        // Discord renders mentions as <@BOT_ID> — replace with @ASSISTANT_NAME
+        let content = message.content;
+        const botId = this.client.user?.id;
+        if (botId && content.includes(`<@${botId}>`)) {
+          content = content.replace(new RegExp(`<@${botId}>`, 'g'), `@${ASSISTANT_NAME}`).trim();
+        }
+
         // Deliver message for registered groups
         const groups = this.opts.registeredGroups();
         if (groups[chatJid]) {
@@ -73,7 +81,7 @@ export class DiscordChannel implements Channel {
             chat_jid: chatJid,
             sender: message.author.id,
             sender_name: message.member?.displayName || message.author.displayName || message.author.username,
-            content: message.content,
+            content,
             timestamp,
             is_from_me: false,
             is_bot_message: false,
