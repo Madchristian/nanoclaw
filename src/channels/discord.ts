@@ -8,6 +8,7 @@ export interface DiscordChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  registerGroup?: (jid: string, group: RegisteredGroup) => void;
   token: string;
   ownerId: string;
   botWhitelist?: string[]; // Bot IDs allowed to send messages (e.g., OpenClaw)
@@ -52,9 +53,27 @@ export class DiscordChannel implements Channel {
         const chatJid = `discord:${message.channelId}`;
         const timestamp = message.createdAt.toISOString();
 
-        // Track owner DM channel
-        if (message.channel.isDMBased() && message.author.id === this.opts.ownerId) {
+        // --- DM handling: owner-only pairing ---
+        if (message.channel.isDMBased()) {
+          // Only the owner may DM the bot
+          if (message.author.id !== this.opts.ownerId) {
+            logger.info({ sender: message.author.id }, 'Ignoring DM from non-owner');
+            return;
+          }
           this.ownerDmChannelId = message.channelId;
+
+          // Auto-register owner DM as a group if not already known
+          const groups = this.opts.registeredGroups();
+          if (!groups[chatJid] && this.opts.registerGroup) {
+            logger.info({ chatJid }, 'Owner DM detected — auto-registering as private channel');
+            this.opts.registerGroup(chatJid, {
+              name: 'Owner DM',
+              folder: 'owner-dm',
+              trigger: `@${ASSISTANT_NAME}`,
+              added_at: new Date().toISOString(),
+              requiresTrigger: false,
+            });
+          }
         }
 
         const channelName = message.channel.isDMBased()
@@ -74,8 +93,8 @@ export class DiscordChannel implements Channel {
         }
 
         // Deliver message for registered groups
-        const groups = this.opts.registeredGroups();
-        if (groups[chatJid]) {
+        const currentGroups = this.opts.registeredGroups();
+        if (currentGroups[chatJid]) {
           this.opts.onMessage(chatJid, {
             id: message.id,
             chat_jid: chatJid,

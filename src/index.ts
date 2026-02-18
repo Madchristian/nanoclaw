@@ -497,6 +497,7 @@ async function main(): Promise<void> {
       onMessage: (chatJid, msg) => storeMessage(msg),
       onChatMetadata: (chatJid, timestamp, name) => storeChatMetadata(chatJid, timestamp),
       registeredGroups: () => registeredGroups,
+      registerGroup,
       token,
       ownerId,
       botWhitelist,
