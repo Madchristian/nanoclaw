@@ -147,7 +147,7 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
  * Archive the full transcript to conversations/ before compaction.
  */
 function createPreCompactHook(): HookCallback {
-  return async (input, _toolUseId, _context) => {
+  return async (input: any, _toolUseId: any, _context: any) => {
     const preCompact = input as PreCompactHookInput;
     const transcriptPath = preCompact.transcript_path;
     const sessionId = preCompact.session_id;
@@ -342,7 +342,7 @@ const DESTRUCTIVE_PATTERNS: RegExp[] = [
  * that cannot be bypassed by prompt injection.
  */
 function createOwnerGuardHook(containerInput: ContainerInput): HookCallback {
-  return async (input, _toolUseId, _context) => {
+  return async (input: any, _toolUseId: any, _context: any) => {
     const preInput = input as PreToolUseHookInput;
     const command = (preInput.tool_input as { command?: string })?.command;
     if (!command) return {};
@@ -440,7 +440,7 @@ function createOwnerGuardHook(containerInput: ContainerInput): HookCallback {
 }
 
 function createSanitizeBashHook(): HookCallback {
-  return async (input, _toolUseId, _context) => {
+  return async (input: any, _toolUseId: any, _context: any) => {
     const preInput = input as PreToolUseHookInput;
     const command = (preInput.tool_input as { command?: string })?.command;
     if (!command) return {};
