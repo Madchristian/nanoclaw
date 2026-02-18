@@ -52,6 +52,7 @@ let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
 
 let channel: Channel;
+let ownerUserId: string | undefined; // Platform user ID of the owner (for trust checks)
 const queue = new GroupQueue();
 
 function loadState(): void {
@@ -168,6 +169,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
+  // Extract unique sender IDs for trust verification in the container
+  const senderIds = [...new Set(missedMessages.map(m => m.sender))];
+
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
@@ -186,7 +190,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (result.status === 'error') {
       hadError = true;
     }
-  });
+  }, senderIds);
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -213,6 +217,7 @@ async function runAgent(
   prompt: string,
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  senderIds?: string[],
 ): Promise<'success' | 'error'> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const sessionId = sessions[group.folder];
@@ -262,6 +267,8 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
+        senderIds,
+        trustConfig: ownerUserId ? { ownerId: ownerUserId } : undefined,
       },
       (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,
@@ -485,6 +492,7 @@ async function main(): Promise<void> {
     if (!token || !ownerId) {
       throw new Error('DISCORD_TOKEN and DISCORD_OWNER_ID are required for Discord channel');
     }
+    ownerUserId = ownerId; // Store for trust checks in container input
     channel = new DiscordChannel({
       onMessage: (chatJid, msg) => storeMessage(msg),
       onChatMetadata: (chatJid, timestamp, name) => storeChatMetadata(chatJid, timestamp),

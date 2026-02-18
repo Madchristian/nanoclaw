@@ -42,6 +42,10 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
+  /** Platform user IDs of message senders that triggered this container run */
+  senderIds?: string[];
+  /** Trust configuration for owner-based permission checks */
+  trustConfig?: { ownerId: string };
 }
 
 export interface ContainerOutput {

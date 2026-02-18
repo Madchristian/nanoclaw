@@ -32,6 +32,15 @@ export interface ContainerConfig {
   timeout?: number; // Default: 300000 (5 minutes)
 }
 
+/**
+ * Trust configuration for owner-based permission checks.
+ * Used by the agent-runner PreToolUse hook to block destructive
+ * commands when the triggering user is not the owner.
+ */
+export interface TrustConfig {
+  ownerId: string; // Discord/platform user ID of the owner
+}
+
 export interface RegisteredGroup {
   name: string;
   folder: string;
