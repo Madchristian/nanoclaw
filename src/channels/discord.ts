@@ -10,6 +10,7 @@ export interface DiscordChannelOpts {
   registeredGroups: () => Record<string, RegisteredGroup>;
   token: string;
   ownerId: string;
+  botWhitelist?: string[]; // Bot IDs allowed to send messages (e.g., OpenClaw)
 }
 
 export class DiscordChannel implements Channel {
@@ -19,9 +20,11 @@ export class DiscordChannel implements Channel {
   private connected = false;
   private opts: DiscordChannelOpts;
   private ownerDmChannelId: string | null = null;
+  private botWhitelist: Set<string>;
 
   constructor(opts: DiscordChannelOpts) {
     this.opts = opts;
+    this.botWhitelist = new Set(opts.botWhitelist || []);
     this.client = new Client({
       intents: [
         GatewayIntentBits.Guilds,
@@ -44,8 +47,7 @@ export class DiscordChannel implements Channel {
       this.client.on(Events.MessageCreate, async (message: Message) => {
         if (message.author.id === this.client.user?.id) return;
         // Allow messages from whitelisted bots (e.g., OpenClaw), ignore all others
-        const BOT_WHITELIST = new Set(process.env.DISCORD_BOT_WHITELIST?.split(',') || []);
-        if (message.author.bot && !BOT_WHITELIST.has(message.author.id)) return;
+        if (message.author.bot && !this.botWhitelist.has(message.author.id)) return;
 
         const chatJid = `discord:${message.channelId}`;
         const timestamp = message.createdAt.toISOString();

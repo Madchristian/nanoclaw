@@ -478,9 +478,10 @@ async function main(): Promise<void> {
 
   // Create channel based on config
   if (CHANNEL === 'discord') {
-    const envSecrets = readEnvFile(['DISCORD_TOKEN', 'DISCORD_OWNER_ID']);
+    const envSecrets = readEnvFile(['DISCORD_TOKEN', 'DISCORD_OWNER_ID', 'DISCORD_BOT_WHITELIST']);
     const token = process.env.DISCORD_TOKEN || envSecrets.DISCORD_TOKEN;
     const ownerId = process.env.DISCORD_OWNER_ID || envSecrets.DISCORD_OWNER_ID;
+    const botWhitelist = (process.env.DISCORD_BOT_WHITELIST || envSecrets.DISCORD_BOT_WHITELIST || '').split(',').filter(Boolean);
     if (!token || !ownerId) {
       throw new Error('DISCORD_TOKEN and DISCORD_OWNER_ID are required for Discord channel');
     }
@@ -490,8 +491,9 @@ async function main(): Promise<void> {
       registeredGroups: () => registeredGroups,
       token,
       ownerId,
+      botWhitelist,
     });
-    logger.info('Using Discord channel');
+    logger.info({ botWhitelist }, 'Using Discord channel');
   } else {
     channel = new WhatsAppChannel({
       onMessage: (chatJid, msg) => storeMessage(msg),
