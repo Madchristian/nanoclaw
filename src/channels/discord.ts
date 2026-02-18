@@ -43,7 +43,9 @@ export class DiscordChannel implements Channel {
 
       this.client.on(Events.MessageCreate, async (message: Message) => {
         if (message.author.id === this.client.user?.id) return;
-        if (message.author.bot) return;
+        // Allow messages from whitelisted bots (e.g., OpenClaw), ignore all others
+        const BOT_WHITELIST = new Set(process.env.DISCORD_BOT_WHITELIST?.split(',') || []);
+        if (message.author.bot && !BOT_WHITELIST.has(message.author.id)) return;
 
         const chatJid = `discord:${message.channelId}`;
         const timestamp = message.createdAt.toISOString();
