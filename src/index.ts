@@ -456,12 +456,16 @@ function cleanupOrphanedContainers(): void {
       logger.info({ count: orphans.length, names: orphans }, 'Stopped orphaned containers');
     }
   } catch (err) {
-    logger.warn({ err }, 'Failed to clean up orphaned containers');
+    if (CHANNEL === 'discord') {
+      logger.debug({ err }, 'Container cleanup skipped (CLI not available)');
+    } else {
+      logger.warn({ err }, 'Failed to clean up orphaned containers');
+    }
   }
 }
 
 async function main(): Promise<void> {
-  // Always clean up orphaned containers from previous runs
+  // Clean up orphaned containers from previous runs
   cleanupOrphanedContainers();
 
   if (CHANNEL !== 'discord') {
