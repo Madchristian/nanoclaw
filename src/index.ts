@@ -427,7 +427,10 @@ function ensureContainerSystemRunning(): void {
     }
   }
 
-  // Kill and clean up orphaned NanoClaw containers from previous runs
+  // Orphan cleanup is now handled by cleanupOrphanedContainers() in main()
+}
+
+function cleanupOrphanedContainers(): void {
   try {
     const output = execSync('container ls --format json', {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -439,7 +442,7 @@ function ensureContainerSystemRunning(): void {
       .map((c) => c.configuration.id);
     for (const name of orphans) {
       try {
-        execSync(`container stop ${name}`, { stdio: 'pipe' });
+        execSync(`container stop ${name}`, { stdio: 'pipe', timeout: 10000 });
       } catch { /* already stopped */ }
     }
     if (orphans.length > 0) {
@@ -451,7 +454,14 @@ function ensureContainerSystemRunning(): void {
 }
 
 async function main(): Promise<void> {
-  ensureContainerSystemRunning();
+  // Always clean up orphaned containers from previous runs
+  cleanupOrphanedContainers();
+
+  if (CHANNEL !== 'discord') {
+    ensureContainerSystemRunning();
+  } else {
+    logger.info('Discord mode: container system check skipped');
+  }
   initDatabase();
   logger.info('Database initialized');
   loadState();
