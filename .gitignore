@@ -31,3 +31,5 @@ groups/global/*
 
 agents-sdk-docs
 .secrets/
+data/chromadb/
+data/chromadb-ip.txt

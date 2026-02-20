@@ -28,8 +28,8 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Install edge-tts (TTS) and faster-whisper (STT) 
-RUN pip3 install --break-system-packages edge-tts faster-whisper
+# Install edge-tts (TTS), faster-whisper (STT), and chromadb-client (memory)
+RUN pip3 install --break-system-packages edge-tts faster-whisper chromadb
 
 # Set Chromium path for agent-browser
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
@@ -57,7 +57,9 @@ RUN npm run build
 COPY skills/tts/tts.sh /usr/local/bin/tts
 COPY skills/stt/stt.py /usr/local/bin/stt
 COPY skills/memory/memory_search.py /usr/local/bin/memory_search
-RUN chmod +x /usr/local/bin/tts /usr/local/bin/stt /usr/local/bin/memory_search
+COPY skills/memory/memory_store.py /usr/local/bin/memory_store
+COPY skills/memory/memory_list.py /usr/local/bin/memory_list
+RUN chmod +x /usr/local/bin/tts /usr/local/bin/stt /usr/local/bin/memory_search /usr/local/bin/memory_store /usr/local/bin/memory_list
 
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input

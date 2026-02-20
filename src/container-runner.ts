@@ -206,6 +206,16 @@ function buildContainerArgs(mounts: VolumeMount[], containerName: string): strin
     args.push('-e', 'HOME=/home/node');
   }
 
+  // Inject ChromaDB container IP if discovery file exists
+  const chromaIpFile = path.join(DATA_DIR, 'chromadb-ip.txt');
+  if (fs.existsSync(chromaIpFile)) {
+    const chromaIp = fs.readFileSync(chromaIpFile, 'utf-8').trim();
+    if (chromaIp) {
+      args.push('-e', `CHROMADB_HOST=${chromaIp}`);
+      args.push('-e', `CHROMADB_PORT=8000`);
+    }
+  }
+
   // Apple Container: --mount for readonly, -v for read-write
   for (const mount of mounts) {
     if (mount.readonly) {
