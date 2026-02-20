@@ -446,9 +446,12 @@ function cleanupOrphanedContainers(): void {
       encoding: 'utf-8',
     });
     const containers: { status: string; configuration: { id: string } }[] = JSON.parse(output || '[]');
+    // Don't kill persistent service containers (chromadb, etc.)
+    const PROTECTED_CONTAINERS = ['nanoclaw-chromadb'];
     const orphans = containers
       .filter((c) => c.status === 'running' && c.configuration.id.startsWith('nanoclaw-'))
-      .map((c) => c.configuration.id);
+      .map((c) => c.configuration.id)
+      .filter((name) => !PROTECTED_CONTAINERS.includes(name));
     for (const name of orphans) {
       try {
         execFileSync('container', ['stop', name], { stdio: 'pipe', timeout: 10000 });
