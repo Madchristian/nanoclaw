@@ -21,23 +21,22 @@ import chromadb
 
 CHROMADB_HOST = os.environ.get("CHROMADB_HOST", "192.168.64.1")
 CHROMADB_PORT = int(os.environ.get("CHROMADB_PORT", "8000"))
-OLLAMA_URL = os.environ.get("OLLAMA_BASE_URL", "http://192.168.64.1:30068")
-EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text-v2-moe")
+EMBED_URL = os.environ.get("EMBED_URL", f"http://{CHROMADB_HOST}:8001")
 
 VALID_COLLECTIONS = {"conversations", "knowledge", "tasks"}
 
 
 def get_embedding(text: str) -> List[float]:
-    """Get embedding via Ollama API."""
-    data = json.dumps({"model": EMBEDDING_MODEL, "input": text}).encode()
+    """Get embedding via local embedding service (runs in ChromaDB container)."""
+    data = json.dumps({"text": text}).encode()
     req = urllib.request.Request(
-        f"{OLLAMA_URL}/v1/embeddings",
+        f"{EMBED_URL}/embed",
         data=data,
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=60) as resp:
         result = json.loads(resp.read())
-        return result["data"][0]["embedding"]
+        return result["embedding"]
 
 
 def store(collection: str, text: str, tags: str = "", source: str = "",
