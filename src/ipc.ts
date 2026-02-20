@@ -15,6 +15,7 @@ import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
+  sendVoice?: (jid: string, audioPath: string) => Promise<void>;
   sendMessage: (jid: string, text: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
@@ -71,7 +72,29 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (data.type === 'message' && data.chatJid && data.text) {
+              if (data.type === 'voice_message' && data.chatJid && data.audioPath) {
+                // Voice message — send audio file as attachment
+                const targetGroup = registeredGroups[data.chatJid];
+                if (
+                  isMain ||
+                  (targetGroup && targetGroup.folder === sourceGroup)
+                ) {
+                  if (deps.sendVoice) {
+                    await deps.sendVoice(data.chatJid, data.audioPath);
+                    logger.info(
+                      { chatJid: data.chatJid, sourceGroup },
+                      'IPC voice message sent',
+                    );
+                  } else {
+                    logger.warn('sendVoice not available on this channel');
+                  }
+                } else {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized IPC voice message attempt blocked',
+                  );
+                }
+              } else if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
                 if (

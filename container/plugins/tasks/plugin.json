@@ -1,0 +1,8 @@
+{
+  "name": "tasks",
+  "version": "1.0.0",
+  "description": "Schedule, list, pause, resume, and cancel recurring tasks",
+  "target": "container",
+  "capabilities": ["ipc:write", "tasks:manage"],
+  "main": "index.ts"
+}

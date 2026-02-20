@@ -1,0 +1,8 @@
+{
+  "name": "tts",
+  "version": "1.0.0",
+  "description": "Text-to-speech using Microsoft Neural voices (edge-tts)",
+  "target": "container",
+  "capabilities": ["shell", "ipc:write"],
+  "main": "index.ts"
+}

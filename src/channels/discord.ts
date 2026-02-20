@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits, Message, TextChannel, DMChannel, Partials } from 'discord.js';
+import { Client, Events, GatewayIntentBits, Message, MessageFlags, TextChannel, DMChannel, Partials, AttachmentBuilder } from 'discord.js';
 import { ASSISTANT_NAME, STORE_DIR } from '../config.js';
 import { updateChatName } from '../db.js';
 import { logger } from '../logger.js';
@@ -103,6 +103,21 @@ export class DiscordChannel implements Channel {
           content = content.replace(new RegExp(`<@${botId}>`, 'g'), `@${ASSISTANT_NAME}`).trim();
         }
 
+        // Append audio/voice attachments as metadata for STT processing
+        const isVoiceMessage = message.flags.has(MessageFlags.IsVoiceMessage);
+        const audioAttachments = message.attachments.filter(a =>
+          a.contentType?.startsWith('audio/') ||
+          a.name?.endsWith('.ogg') ||
+          a.name?.endsWith('.mp3') ||
+          a.name?.endsWith('.wav') ||
+          isVoiceMessage
+        );
+        if (audioAttachments.size > 0) {
+          const urls = audioAttachments.map(a => a.url);
+          content = (content ? content + '\n' : '') +
+            `[voice_message: ${urls.join(', ')}]`;
+        }
+
         // Deliver message for registered groups
         const currentGroups = this.opts.registeredGroups();
         if (currentGroups[chatJid]) {
@@ -157,21 +172,76 @@ export class DiscordChannel implements Channel {
 
   async disconnect(): Promise<void> {
     this.connected = false;
+    for (const interval of this.typingIntervals.values()) {
+      clearInterval(interval);
+    }
+    this.typingIntervals.clear();
     await this.client.destroy();
   }
 
+  private typingIntervals = new Map<string, ReturnType<typeof setInterval>>();
+
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
-    if (!isTyping) return;
     const channelId = this.jidToChannelId(jid);
     if (!channelId) return;
 
+    // Stop any existing interval for this jid
+    const existing = this.typingIntervals.get(jid);
+    if (existing) {
+      clearInterval(existing);
+      this.typingIntervals.delete(jid);
+    }
+
+    if (!isTyping) return;
+
+    const doTyping = async () => {
+      try {
+        const channel = await this.client.channels.fetch(channelId);
+        if (channel?.isTextBased() && 'sendTyping' in channel) {
+          await (channel as TextChannel | DMChannel).sendTyping();
+        }
+      } catch (err) {
+        logger.debug({ jid, err }, 'Failed to send typing indicator');
+      }
+    };
+
+    // Send immediately, then refresh every 8s (Discord typing expires after ~10s)
+    await doTyping();
+    this.typingIntervals.set(jid, setInterval(doTyping, 8000));
+  }
+
+  async sendVoice(jid: string, audioPath: string): Promise<void> {
+    const channelId = this.jidToChannelId(jid);
+    if (!channelId) {
+      logger.warn({ jid }, 'Cannot resolve JID to Discord channel for voice');
+      return;
+    }
+
     try {
       const channel = await this.client.channels.fetch(channelId);
-      if (channel?.isTextBased() && 'sendTyping' in channel) {
-        await (channel as TextChannel | DMChannel).sendTyping();
+      if (!channel || !channel.isTextBased()) {
+        logger.warn({ channelId }, 'Channel not found or not text-based');
+        return;
       }
+
+      const fs = await import('fs');
+      if (!fs.existsSync(audioPath)) {
+        logger.warn({ audioPath }, 'Audio file not found');
+        return;
+      }
+
+      const attachment = new AttachmentBuilder(audioPath, {
+        name: 'voice-message.mp3',
+        description: 'Voice message',
+      });
+
+      // Discord voice messages need specific flags — send as regular attachment
+      await (channel as TextChannel | DMChannel).send({ files: [attachment] });
+      // Clean up the audio file after successful send
+      try { fs.unlinkSync(audioPath); } catch { /* already gone */ }
+      logger.info({ jid, audioPath }, 'Voice message sent');
     } catch (err) {
-      logger.debug({ jid, err }, 'Failed to send typing indicator');
+      logger.error({ jid, err }, 'Failed to send voice message');
     }
   }
 

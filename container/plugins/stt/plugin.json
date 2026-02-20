@@ -1,0 +1,8 @@
+{
+  "name": "stt",
+  "version": "1.0.0",
+  "description": "Speech-to-text using faster-whisper",
+  "target": "container",
+  "capabilities": ["shell"],
+  "main": "index.ts"
+}

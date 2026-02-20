@@ -72,8 +72,11 @@ export interface ScheduledTask {
   next_run: string | null;
   last_run: string | null;
   last_result: string | null;
-  status: 'active' | 'paused' | 'completed';
+  status: 'active' | 'paused' | 'completed' | 'error';
   created_at: string;
+  retry_count: number;
+  last_error: string | null;
+  max_retries: number;
 }
 
 export interface TaskRunLog {
@@ -96,6 +99,8 @@ export interface Channel {
   disconnect(): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
+  // Optional: send audio file as voice message attachment.
+  sendVoice?(jid: string, audioPath: string): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages

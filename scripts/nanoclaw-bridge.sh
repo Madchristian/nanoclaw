@@ -24,6 +24,7 @@ vaultwarden:18443:bitwarden.cstrube.de:443
 ssh-truenas:18022:10.0.30.20:22
 homeassistant:18123:10.0.30.5:8123
 kubectl:16443:10.0.40.100:6443
+ollama:30068:10.0.40.20:30068
 "
 
 start_bridges() {
@@ -45,10 +46,10 @@ start_bridges() {
     echo "✅ (pid $!)"
   }
 
-  start_one vaultwarden 18443 bitwarden.cstrube.de 443
-  start_one ssh-truenas 18022 10.0.30.20 22
-  start_one homeassistant 18123 10.0.30.5 8123
-  start_one kubectl 16443 10.0.40.100 6443
+  echo "$BRIDGES" | while IFS=: read -r name listen_port target_host target_port; do
+    [ -z "$name" ] && continue
+    start_one "$name" "$listen_port" "$target_host" "$target_port"
+  done
 
   echo ""
   echo "All bridges started. Container can reach services via $BIND_IP."

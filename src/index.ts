@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -180,6 +180,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
+        // Stop typing before sending — message is ready
+        await channel.setTyping?.(chatJid, false);
         await channel.sendMessage(chatJid, text);
         outputSentToUser = true;
       }
@@ -449,7 +451,7 @@ function cleanupOrphanedContainers(): void {
       .map((c) => c.configuration.id);
     for (const name of orphans) {
       try {
-        execSync(`container stop ${name}`, { stdio: 'pipe', timeout: 10000 });
+        execFileSync('container', ['stop', name], { stdio: 'pipe', timeout: 10000 });
       } catch { /* already stopped */ }
     }
     if (orphans.length > 0) {
@@ -531,6 +533,7 @@ async function main(): Promise<void> {
     },
   });
   startIpcWatcher({
+    sendVoice: channel.sendVoice ? (jid, audioPath) => channel.sendVoice!(jid, audioPath) : undefined,
     sendMessage: (jid, text) => channel.sendMessage(jid, text),
     registeredGroups: () => registeredGroups,
     registerGroup,
