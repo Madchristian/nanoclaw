@@ -380,6 +380,15 @@ export async function processTaskIpc(
         break;
       }
       if (data.jid && data.name && data.folder && data.trigger) {
+        // Validate folder name to prevent path traversal
+        const folderPattern = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+        if (!folderPattern.test(data.folder) || data.folder.length > 50 || data.folder.includes('..')) {
+          logger.warn(
+            { folder: data.folder },
+            'Invalid folder name in register_group — must be lowercase alphanumeric with hyphens, max 50 chars',
+          );
+          break;
+        }
         deps.registerGroup(data.jid, {
           name: data.name,
           folder: data.folder,

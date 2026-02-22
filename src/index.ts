@@ -41,6 +41,7 @@ import { formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import { startDashboard } from './dashboard.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -547,6 +548,16 @@ async function main(): Promise<void> {
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
   startMessageLoop();
+
+  // Start local dashboard (localhost only, no auth)
+  const dashboardPort = parseInt(process.env.DASHBOARD_PORT || '3333', 10);
+  startDashboard(dashboardPort, {
+    groupQueue: queue,
+    sendMessage: async (jid, rawText) => {
+      const text = formatOutbound(rawText);
+      if (text) await channel.sendMessage(jid, text);
+    },
+  });
 }
 
 // Guard: only run when executed directly, not when imported by tests

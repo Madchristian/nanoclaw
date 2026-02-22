@@ -211,7 +211,7 @@ interface TrustedUsersConfig {
   users: TrustedUser[];
 }
 
-const TRUSTED_USERS_PATH = '/workspace/group/trusted_users.json';
+const TRUSTED_USERS_PATH = '/workspace/config/trusted-users.json';
 
 /**
  * Permission levels:
@@ -433,6 +433,72 @@ function createOwnerGuardHook(containerInput: ContainerInput): HookCallback {
           },
         };
       }
+    }
+
+    return {};
+  };
+}
+
+/**
+ * PreToolUse hook that restricts Write/Edit tools based on trust level.
+ * Prevents non-owner users from modifying security-critical files.
+ */
+function createFileGuardHook(containerInput: ContainerInput): HookCallback {
+  return async (input: any, _toolUseId: any, _context: any) => {
+    const preInput = input as PreToolUseHookInput;
+    const filePath = (preInput.tool_input as { file_path?: string })?.file_path;
+    if (!filePath) return {};
+
+    const { trustConfig, senderIds, isScheduledTask } = containerInput;
+    if (!trustConfig) return {};
+    if (isScheduledTask) return {};
+
+    type TrustLevel = 'owner' | 'admin' | 'operate' | 'read' | 'none';
+    const levels: TrustLevel[] = ['owner', 'admin', 'operate', 'read', 'none'];
+    const effectiveLevel: TrustLevel = senderIds?.length
+      ? senderIds.reduce<TrustLevel>((lowest, id) => {
+          const level = getTrustLevel(id, trustConfig.ownerId);
+          return levels.indexOf(level) > levels.indexOf(lowest) ? level : lowest;
+        }, 'owner')
+      : 'none';
+
+    if (effectiveLevel === 'owner' || effectiveLevel === 'admin') return {};
+
+    if (effectiveLevel === 'none' || effectiveLevel === 'read') {
+      log(`🚫 BLOCKED file write from ${effectiveLevel}-level user: ${filePath.slice(0, 200)}`);
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          decision: 'block',
+          reason: `🚫 Blocked: Dein Trust-Level (${effectiveLevel}) erlaubt keine Dateiänderungen.`,
+        },
+      };
+    }
+
+    // operate level: only allow writes within /workspace/group/
+    const resolved = path.resolve(filePath);
+    const blockedPrefixes = ['/workspace/config/', '/workspace/global/', '/home/node/.claude/'];
+    for (const prefix of blockedPrefixes) {
+      if (resolved.startsWith(prefix)) {
+        log(`🚫 BLOCKED file write to protected path (operate-level): ${resolved.slice(0, 200)}`);
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            decision: 'block',
+            reason: `🚫 Blocked: Schreibzugriff auf ${prefix} erfordert Admin- oder Owner-Berechtigung.`,
+          },
+        };
+      }
+    }
+    if (!resolved.startsWith('/workspace/group/')) {
+      log(`🚫 BLOCKED file write outside /workspace/group/ (operate-level): ${resolved.slice(0, 200)}`);
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          decision: 'block',
+          reason: `🚫 Blocked: Operate-Level erlaubt nur Schreibzugriff innerhalb von /workspace/group/.`,
+        },
+      };
     }
 
     return {};
@@ -702,6 +768,8 @@ async function runQuery(
         PreCompact: [{ hooks: [createPreCompactHook()] }],
         PreToolUse: [
           { matcher: 'Bash', hooks: [createOwnerGuardHook(containerInput), createSanitizeBashHook()] },
+          { matcher: 'Write', hooks: [createFileGuardHook(containerInput)] },
+          { matcher: 'Edit', hooks: [createFileGuardHook(containerInput)] },
         ],
       },
     }
