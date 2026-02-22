@@ -27,6 +27,10 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
+  /** Platform user IDs of message senders that triggered this container run */
+  senderIds?: string[];
+  /** Trust configuration for owner-based permission checks */
+  trustConfig?: { ownerId: string };
 }
 
 interface ContainerOutput {
@@ -143,7 +147,7 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
  * Archive the full transcript to conversations/ before compaction.
  */
 function createPreCompactHook(): HookCallback {
-  return async (input, _toolUseId, _context) => {
+  return async (input: any, _toolUseId: any, _context: any) => {
     const preCompact = input as PreCompactHookInput;
     const transcriptPath = preCompact.transcript_path;
     const sessionId = preCompact.session_id;
@@ -189,8 +193,320 @@ function createPreCompactHook(): HookCallback {
 // be visible to commands Kit runs.
 const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
 
+/**
+ * Delegated trust entry — temporary elevated permissions for non-owner users.
+ * Stored in /workspace/group/trusted_users.json, managed by the owner.
+ */
+interface TrustedUser {
+  userId: string;       // Discord user ID
+  name: string;         // Human-readable name (for logging)
+  level: 'read' | 'operate' | 'admin'; // Permission level
+  expiresAt?: string;   // ISO timestamp — undefined = permanent until removed
+  grantedBy: string;    // Who granted this (should always be owner)
+  grantedAt: string;    // When granted
+  note?: string;        // Optional reason
+}
+
+interface TrustedUsersConfig {
+  users: TrustedUser[];
+}
+
+const TRUSTED_USERS_PATH = '/workspace/config/trusted-users.json';
+
+/**
+ * Permission levels:
+ * - read:    kubectl get/describe/logs, status checks, monitoring
+ * - operate: read + Home Assistant control, kubectl rollout restart, backups
+ * - admin:   operate + most destructive ops (but NOT user mgmt, firewall, or secrets rotation)
+ *
+ * Owner always has full access regardless of this file.
+ */
+function loadTrustedUsers(): TrustedUser[] {
+  try {
+    if (!fs.existsSync(TRUSTED_USERS_PATH)) return [];
+    const config: TrustedUsersConfig = JSON.parse(fs.readFileSync(TRUSTED_USERS_PATH, 'utf-8'));
+    const now = new Date();
+    // Filter expired entries
+    return (config.users || []).filter(u => {
+      if (!u.expiresAt) return true;
+      return new Date(u.expiresAt) > now;
+    });
+  } catch (err) {
+    log(`Failed to load trusted users: ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
+}
+
+function getTrustLevel(userId: string, ownerId: string): 'owner' | 'admin' | 'operate' | 'read' | 'none' {
+  if (userId === ownerId) return 'owner';
+  const trusted = loadTrustedUsers();
+  const entry = trusted.find(u => u.userId === userId);
+  if (entry) {
+    log(`Delegated trust: ${entry.name} (${entry.userId}) → level=${entry.level}, expires=${entry.expiresAt || 'never'}`);
+    return entry.level;
+  }
+  return 'none';
+}
+
+// Commands allowed for 'read' level (safe, no state changes)
+const READ_SAFE_PATTERNS: RegExp[] = [
+  /^\s*kubectl\s+(get|describe|logs|top|version|cluster-info)\b/,
+  /^\s*flux\s+(get|logs|stats)\b/,
+  /^\s*helm\s+(list|status|get)\b/,
+  /^\s*cat\b/,
+  /^\s*ls\b/,
+  /^\s*grep\b/,
+  /^\s*find\b/,
+  /^\s*df\b/,
+  /^\s*du\b/,
+  /^\s*uptime\b/,
+  /^\s*free\b/,
+  /^\s*top\b/,
+  /^\s*curl\s+.*\bgoogle\.com\b/,  // Safe web lookups
+];
+
+// Commands allowed for 'operate' level (includes read + controlled mutations)
+const OPERATE_PATTERNS: RegExp[] = [
+  /^\s*kubectl\s+rollout\s+restart\b/,
+  /^\s*kubectl\s+scale\b/,
+  /^\s*curl\s+.*homeassistant\b/,
+  /^\s*curl\s+.*10\.0\.30\.5\b/,  // Home Assistant
+];
+
+// Commands still blocked even for 'admin' (owner-only forever)
+const OWNER_ONLY_PATTERNS: RegExp[] = [
+  /\buserdel\b/,
+  /\buseradd\b/,
+  /\bpasswd\b/,
+  /\biptables\b/,
+  /\bnft\b/,
+  /\bufw\b/,
+  /\bssh-keygen\b/,
+  /\bauthorized_keys\b/,
+  /\bprintenv\b.*\b(KEY|TOKEN|SECRET|PASSWORD)\b/i,
+  /\bcat\s+.*\.(env|key|pem|crt|secret)/,
+];
+
+/**
+ * DESTRUCTIVE COMMAND PATTERNS — blocked for non-owner triggers.
+ * These patterns match common destructive operations that could damage
+ * the homelab infrastructure. Only the owner can trigger these.
+ */
+const DESTRUCTIVE_PATTERNS: RegExp[] = [
+  // File deletion
+  /\brm\s+(-[a-zA-Z]*\s+)*\//,           // rm with absolute paths
+  /\brm\s+(-[a-zA-Z]*\s+)*~/,            // rm with home paths
+  /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f/,        // rm -rf / rm -fr variants
+  /\brmdir\b/,
+  /\bshred\b/,
+  // Kubernetes destructive
+  /\bkubectl\s+(delete|drain|cordon|uncordon|taint)\b/,
+  /\bkubectl\s+scale\b/,
+  /\bkubectl\s+(apply|create|patch|replace|edit)\b/,
+  /\bflux\s+(suspend|resume|delete)\b/,
+  /\bhelm\s+(uninstall|delete|rollback)\b/,
+  // Service management
+  /\bsystemctl\s+(stop|restart|disable|mask)\b/,
+  /\bservice\s+\S+\s+(stop|restart)\b/,
+  // SSH with destructive potential
+  /\bssh\s+.*\b(rm|rmdir|dd|mkfs|fdisk|parted|shutdown|reboot|halt|poweroff)\b/,
+  // Disk/filesystem destructive
+  /\bdd\s+.*\bof=/,
+  /\bmkfs\b/,
+  /\bfdisk\b/,
+  /\bparted\b/,
+  // System destructive
+  /\bshutdown\b/,
+  /\breboot\b/,
+  /\bhalt\b/,
+  /\bpoweroff\b/,
+  // User management
+  /\buserdel\b/,
+  /\buseradd\b/,
+  /\bpasswd\b/,
+  // Network/firewall
+  /\biptables\b/,
+  /\bnft\b/,
+  /\bufw\s+(delete|disable|reset)\b/,
+  // Docker/container destructive
+  /\bdocker\s+(rm|rmi|system\s+prune|volume\s+rm|network\s+rm)\b/,
+  /\bcrictl\s+(rm|rmp)\b/,
+  // Secrets exfiltration
+  /\bcat\s+.*\.(env|key|pem|crt|secret)/,
+  /\bprintenv\b.*\b(KEY|TOKEN|SECRET|PASSWORD)\b/i,
+];
+
+/**
+ * PreToolUse hook that blocks destructive Bash commands when the
+ * triggering user(s) are not the owner. This is a CODE-LEVEL check
+ * that cannot be bypassed by prompt injection.
+ */
+function createOwnerGuardHook(containerInput: ContainerInput): HookCallback {
+  return async (input: any, _toolUseId: any, _context: any) => {
+    const preInput = input as PreToolUseHookInput;
+    const command = (preInput.tool_input as { command?: string })?.command;
+    if (!command) return {};
+
+    const { trustConfig, senderIds, isScheduledTask } = containerInput;
+    if (!trustConfig) return {}; // No trust config = no enforcement (fallback to prompt-level)
+
+    // Scheduled tasks are owner-configured, treat as owner-triggered
+    if (isScheduledTask) return {};
+
+    // Determine the effective trust level (lowest level among all senders)
+    type TrustLevel = 'owner' | 'admin' | 'operate' | 'read' | 'none';
+    const levels: TrustLevel[] = ['owner', 'admin', 'operate', 'read', 'none'];
+    const effectiveLevel: TrustLevel = senderIds?.length
+      ? senderIds.reduce<TrustLevel>((lowest, id) => {
+          const level = getTrustLevel(id, trustConfig.ownerId);
+          return levels.indexOf(level) > levels.indexOf(lowest) ? level : lowest;
+        }, 'owner')
+      : 'none'; // No sender info = assume no trust
+
+    // Owner gets full access
+    if (effectiveLevel === 'owner') return {};
+
+    // Owner-only commands — blocked for everyone except owner, even admins
+    for (const pattern of OWNER_ONLY_PATTERNS) {
+      if (pattern.test(command)) {
+        log(`🚫 BLOCKED owner-only command (level=${effectiveLevel}): ${command.slice(0, 200)}`);
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            decision: 'block',
+            reason: `🚫 Blocked: Dieser Befehl ist ausschließlich dem Owner vorbehalten (Usermanagement, Firewall, Secrets). Keine Delegation möglich.`,
+          },
+        };
+      }
+    }
+
+    // Admin level — can do most things except owner-only
+    if (effectiveLevel === 'admin') return {};
+
+    // Operate level — check if command is in operate or read patterns
+    if (effectiveLevel === 'operate') {
+      const isOperateAllowed = OPERATE_PATTERNS.some(p => p.test(command)) ||
+                                READ_SAFE_PATTERNS.some(p => p.test(command));
+      if (isOperateAllowed) return {};
+
+      // Check if it's destructive
+      const isDestructive = DESTRUCTIVE_PATTERNS.some(p => p.test(command));
+      if (isDestructive) {
+        log(`🚫 BLOCKED destructive command for operate-level user: ${command.slice(0, 200)}`);
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            decision: 'block',
+            reason: `🚫 Blocked: Dein Trust-Level (operate) erlaubt diesen destructive Befehl nicht. Frag Christian um Freigabe.`,
+          },
+        };
+      }
+      // Non-destructive, non-listed commands: allow (e.g., echo, python, etc.)
+      return {};
+    }
+
+    // Read level — only safe read commands
+    if (effectiveLevel === 'read') {
+      const isReadAllowed = READ_SAFE_PATTERNS.some(p => p.test(command));
+      if (isReadAllowed) return {};
+
+      log(`🚫 BLOCKED command for read-level user: ${command.slice(0, 200)}`);
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          decision: 'block',
+          reason: `🚫 Blocked: Dein Trust-Level (read) erlaubt nur lesende Befehle. Frag Christian um erweiterte Rechte.`,
+        },
+      };
+    }
+
+    // No trust — block all destructive commands
+    for (const pattern of DESTRUCTIVE_PATTERNS) {
+      if (pattern.test(command)) {
+        log(`🚫 BLOCKED destructive command from untrusted user: ${command.slice(0, 200)}`);
+        log(`   Senders: ${senderIds?.join(', ') || 'unknown'}, Owner: ${trustConfig.ownerId}`);
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            decision: 'block',
+            reason: `🚫 Blocked: Dieser Befehl erfordert Owner-Berechtigung (Discord ID: ${trustConfig.ownerId}). Nur Christian kann destructive/sensitive Befehle freigeben.`,
+          },
+        };
+      }
+    }
+
+    return {};
+  };
+}
+
+/**
+ * PreToolUse hook that restricts Write/Edit tools based on trust level.
+ * Prevents non-owner users from modifying security-critical files.
+ */
+function createFileGuardHook(containerInput: ContainerInput): HookCallback {
+  return async (input: any, _toolUseId: any, _context: any) => {
+    const preInput = input as PreToolUseHookInput;
+    const filePath = (preInput.tool_input as { file_path?: string })?.file_path;
+    if (!filePath) return {};
+
+    const { trustConfig, senderIds, isScheduledTask } = containerInput;
+    if (!trustConfig) return {};
+    if (isScheduledTask) return {};
+
+    type TrustLevel = 'owner' | 'admin' | 'operate' | 'read' | 'none';
+    const levels: TrustLevel[] = ['owner', 'admin', 'operate', 'read', 'none'];
+    const effectiveLevel: TrustLevel = senderIds?.length
+      ? senderIds.reduce<TrustLevel>((lowest, id) => {
+          const level = getTrustLevel(id, trustConfig.ownerId);
+          return levels.indexOf(level) > levels.indexOf(lowest) ? level : lowest;
+        }, 'owner')
+      : 'none';
+
+    if (effectiveLevel === 'owner' || effectiveLevel === 'admin') return {};
+
+    if (effectiveLevel === 'none' || effectiveLevel === 'read') {
+      log(`🚫 BLOCKED file write from ${effectiveLevel}-level user: ${filePath.slice(0, 200)}`);
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          decision: 'block',
+          reason: `🚫 Blocked: Dein Trust-Level (${effectiveLevel}) erlaubt keine Dateiänderungen.`,
+        },
+      };
+    }
+
+    // operate level: only allow writes within /workspace/group/
+    const resolved = path.resolve(filePath);
+    const blockedPrefixes = ['/workspace/config/', '/workspace/global/', '/home/node/.claude/'];
+    for (const prefix of blockedPrefixes) {
+      if (resolved.startsWith(prefix)) {
+        log(`🚫 BLOCKED file write to protected path (operate-level): ${resolved.slice(0, 200)}`);
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            decision: 'block',
+            reason: `🚫 Blocked: Schreibzugriff auf ${prefix} erfordert Admin- oder Owner-Berechtigung.`,
+          },
+        };
+      }
+    }
+    if (!resolved.startsWith('/workspace/group/')) {
+      log(`🚫 BLOCKED file write outside /workspace/group/ (operate-level): ${resolved.slice(0, 200)}`);
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          decision: 'block',
+          reason: `🚫 Blocked: Operate-Level erlaubt nur Schreibzugriff innerhalb von /workspace/group/.`,
+        },
+      };
+    }
+
+    return {};
+  };
+}
+
 function createSanitizeBashHook(): HookCallback {
-  return async (input, _toolUseId, _context) => {
+  return async (input: any, _toolUseId: any, _context: any) => {
     const preInput = input as PreToolUseHookInput;
     const command = (preInput.tool_input as { command?: string })?.command;
     if (!command) return {};
@@ -450,7 +766,11 @@ async function runQuery(
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook()] }],
-        PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
+        PreToolUse: [
+          { matcher: 'Bash', hooks: [createOwnerGuardHook(containerInput), createSanitizeBashHook()] },
+          { matcher: 'Write', hooks: [createFileGuardHook(containerInput)] },
+          { matcher: 'Edit', hooks: [createFileGuardHook(containerInput)] },
+        ],
       },
     }
   })) {

@@ -32,6 +32,15 @@ export interface ContainerConfig {
   timeout?: number; // Default: 300000 (5 minutes)
 }
 
+/**
+ * Trust configuration for owner-based permission checks.
+ * Used by the agent-runner PreToolUse hook to block destructive
+ * commands when the triggering user is not the owner.
+ */
+export interface TrustConfig {
+  ownerId: string; // Discord/platform user ID of the owner
+}
+
 export interface RegisteredGroup {
   name: string;
   folder: string;
@@ -63,8 +72,11 @@ export interface ScheduledTask {
   next_run: string | null;
   last_run: string | null;
   last_result: string | null;
-  status: 'active' | 'paused' | 'completed';
+  status: 'active' | 'paused' | 'completed' | 'error';
   created_at: string;
+  retry_count: number;
+  last_error: string | null;
+  max_retries: number;
 }
 
 export interface TaskRunLog {
@@ -87,6 +99,8 @@ export interface Channel {
   disconnect(): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
+  // Optional: send audio file as voice message attachment.
+  sendVoice?(jid: string, audioPath: string): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages

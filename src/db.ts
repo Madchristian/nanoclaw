@@ -84,6 +84,29 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add retry/error fields to scheduled_tasks if they don't exist
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN retry_count INTEGER DEFAULT 0`,
+    );
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN last_error TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN max_retries INTEGER DEFAULT 3`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   // Add is_bot_message column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(
@@ -298,12 +321,16 @@ export function getMessagesSince(
 }
 
 export function createTask(
-  task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
+  task: Omit<ScheduledTask, 'last_run' | 'last_result' | 'retry_count' | 'last_error' | 'max_retries'> & {
+    retry_count?: number;
+    last_error?: string | null;
+    max_retries?: number;
+  },
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at, retry_count, last_error, max_retries)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -316,6 +343,9 @@ export function createTask(
     task.next_run,
     task.status,
     task.created_at,
+    task.retry_count ?? 0,
+    task.last_error ?? null,
+    task.max_retries ?? 3,
   );
 }
 
@@ -428,6 +458,42 @@ export function logTaskRun(log: TaskRunLog): void {
     log.result,
     log.error,
   );
+}
+
+// --- Task retry/diagnostics accessors ---
+
+export function getRecentTaskRuns(taskId: string, limit: number = 10): TaskRunLog[] {
+  return db
+    .prepare(
+      'SELECT task_id, run_at, duration_ms, status, result, error FROM task_run_logs WHERE task_id = ? ORDER BY run_at DESC LIMIT ?',
+    )
+    .all(taskId, limit) as TaskRunLog[];
+}
+
+export function getTasksByStatus(status: string): ScheduledTask[] {
+  return db
+    .prepare('SELECT * FROM scheduled_tasks WHERE status = ? ORDER BY created_at DESC')
+    .all(status) as ScheduledTask[];
+}
+
+export function resetTaskRetryCount(taskId: string): void {
+  db.prepare(
+    'UPDATE scheduled_tasks SET retry_count = 0, last_error = NULL WHERE id = ?',
+  ).run(taskId);
+}
+
+export function incrementTaskRetryCount(taskId: string, error: string): number {
+  db.prepare(
+    'UPDATE scheduled_tasks SET retry_count = retry_count + 1, last_error = ? WHERE id = ?',
+  ).run(error, taskId);
+  const task = db.prepare('SELECT retry_count FROM scheduled_tasks WHERE id = ?').get(taskId) as
+    | { retry_count: number }
+    | undefined;
+  return task?.retry_count ?? 0;
+}
+
+export function updateTaskStatus(taskId: string, status: string): void {
+  db.prepare('UPDATE scheduled_tasks SET status = ? WHERE id = ?').run(status, taskId);
 }
 
 // --- Router state accessors ---

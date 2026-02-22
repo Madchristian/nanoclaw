@@ -1,0 +1,8 @@
+{
+  "name": "send-message",
+  "version": "1.0.0",
+  "description": "Send messages and voice messages to chats via IPC",
+  "target": "container",
+  "capabilities": ["ipc:write", "messages:write"],
+  "main": "index.ts"
+}

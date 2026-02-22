@@ -1,0 +1,8 @@
+{
+  "name": "groups",
+  "version": "1.0.0",
+  "description": "Register new groups (main group only)",
+  "target": "container",
+  "capabilities": ["ipc:write", "groups:manage"],
+  "main": "index.ts"
+}

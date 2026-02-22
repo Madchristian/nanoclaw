@@ -2,7 +2,7 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in Apple Container and handles IPC
  */
-import { ChildProcess, exec, spawn } from 'child_process';
+import { ChildProcess, exec, execFile, execFileSync, spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -42,6 +42,10 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
+  /** Platform user IDs of message senders that triggered this container run */
+  senderIds?: string[];
+  /** Trust configuration for owner-based permission checks */
+  trustConfig?: { ownerId: string };
 }
 
 export interface ContainerOutput {
@@ -159,6 +163,20 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // NanoClaw config directory (readonly — contains trusted_users.json, mount-allowlist)
+  // Stored outside project root so container agents cannot modify security config
+  const configDir = path.join(
+    homeDir,
+    '.config',
+    'nanoclaw',
+  );
+  fs.mkdirSync(configDir, { recursive: true });
+  mounts.push({
+    hostPath: configDir,
+    containerPath: '/workspace/config',
+    readonly: true,
+  });
+
   // Mount agent-runner source from host — recompiled on container startup.
   // Bypasses Apple Container's sticky build cache for code changes.
   const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
@@ -201,6 +219,32 @@ function buildContainerArgs(mounts: VolumeMount[], containerName: string): strin
     args.push('--user', `${hostUid}:${hostGid}`);
     args.push('-e', 'HOME=/home/node');
   }
+
+  // Discover ChromaDB container IP dynamically (falls back to file)
+  let chromaIp = '';
+  try {
+    const listOutput = execFileSync('container', ['list'], { encoding: 'utf-8', timeout: 5000 });
+    const chromaLine = listOutput.split('\n').find(l => l.includes('nanoclaw-chromadb'));
+    if (chromaLine) {
+      const addrMatch = chromaLine.match(/(\d+\.\d+\.\d+\.\d+)/);
+      if (addrMatch) chromaIp = addrMatch[1];
+    }
+  } catch { /* ignore */ }
+  // Fallback to file
+  if (!chromaIp) {
+    const chromaIpFile = path.join(DATA_DIR, 'chromadb-ip.txt');
+    if (fs.existsSync(chromaIpFile)) {
+      chromaIp = fs.readFileSync(chromaIpFile, 'utf-8').trim();
+    }
+  }
+  if (chromaIp) {
+    args.push('-e', `CHROMADB_HOST=${chromaIp}`);
+    args.push('-e', `CHROMADB_PORT=8000`);
+    // Update discovery file for consistency
+    fs.writeFileSync(path.join(DATA_DIR, 'chromadb-ip.txt'), chromaIp + '\n');
+  }
+  // Ollama always reachable via bridge on gateway IP
+  args.push('-e', 'OLLAMA_BASE_URL=http://192.168.64.1:30068');
 
   // Apple Container: --mount for readonly, -v for read-write
   for (const mount of mounts) {
@@ -369,7 +413,7 @@ export async function runContainerAgent(
     const killOnTimeout = () => {
       timedOut = true;
       logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
-      exec(`container stop ${containerName}`, { timeout: 15000 }, (err) => {
+      execFile('container', ['stop', containerName], { timeout: 15000 }, (err) => {
         if (err) {
           logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
           container.kill('SIGKILL');

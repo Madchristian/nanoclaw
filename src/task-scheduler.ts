@@ -14,13 +14,22 @@ import { ContainerOutput, runContainerAgent, writeTasksSnapshot } from './contai
 import {
   getAllTasks,
   getDueTasks,
+  getRecentTaskRuns,
   getTaskById,
+  getTasksByStatus,
+  incrementTaskRetryCount,
   logTaskRun,
+  resetTaskRetryCount,
   updateTaskAfterRun,
+  updateTaskStatus,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
+import { diagnoseTaskFailure, formatFailureNotification, TaskDiagnosis } from './task-diagnostics.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
+
+/** Retry delays in milliseconds: 30s, 2min, 10min */
+const RETRY_DELAYS = [30_000, 120_000, 600_000];
 
 export interface SchedulerDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
@@ -28,6 +37,146 @@ export interface SchedulerDependencies {
   queue: GroupQueue;
   onProcess: (groupJid: string, proc: ChildProcess, containerName: string, groupFolder: string) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
+}
+
+export interface SchedulerHealth {
+  totalTasks: number;
+  activeTasks: number;
+  pausedTasks: number;
+  errorTasks: number;
+  recentFailures: Array<{
+    taskId: string;
+    prompt: string;
+    failCount: number;
+    lastError: string;
+    diagnosis: TaskDiagnosis;
+  }>;
+}
+
+export function getSchedulerHealth(): SchedulerHealth {
+  const allTasks = getAllTasks();
+  const errorTasks = getTasksByStatus('error');
+  const pausedTasks = getTasksByStatus('paused');
+  const activeTasks = getTasksByStatus('active');
+
+  const recentFailures = errorTasks.slice(0, 20).map((task) => {
+    const recentRuns = getRecentTaskRuns(task.id, 5);
+    const diagnosis = diagnoseTaskFailure(task, recentRuns, task.last_error || 'Unknown');
+    return {
+      taskId: task.id,
+      prompt: task.prompt.slice(0, 100),
+      failCount: task.retry_count,
+      lastError: task.last_error || 'Unknown',
+      diagnosis,
+    };
+  });
+
+  return {
+    totalTasks: allTasks.length,
+    activeTasks: activeTasks.length,
+    pausedTasks: pausedTasks.length,
+    errorTasks: errorTasks.length,
+    recentFailures,
+  };
+}
+
+/**
+ * Handle task failure: diagnose, auto-recover, notify owner if needed.
+ * Schedules retries via setTimeout (non-blocking).
+ */
+async function handleTaskFailure(
+  task: ScheduledTask,
+  error: string,
+  deps: SchedulerDependencies,
+): Promise<void> {
+  const retryCount = incrementTaskRetryCount(task.id, error);
+  const recentRuns = getRecentTaskRuns(task.id, 10);
+  const diagnosis = diagnoseTaskFailure(task, recentRuns, error);
+
+  logger.info(
+    { taskId: task.id, retryCount, pattern: diagnosis.pattern, recommendation: diagnosis.recommendation },
+    'Task failure diagnosed',
+  );
+
+  // Auto-recovery based on diagnosis
+  switch (diagnosis.pattern) {
+    case 'orphaned': {
+      updateTaskStatus(task.id, 'completed');
+      const msg = formatFailureNotification(task, diagnosis, error, 'completed');
+      await deps.sendMessage(task.chat_jid, msg).catch((e) =>
+        logger.error({ err: e, taskId: task.id }, 'Failed to send failure notification'),
+      );
+      return;
+    }
+
+    case 'persistent': {
+      updateTaskStatus(task.id, 'paused');
+      const msg = formatFailureNotification(task, diagnosis, error, 'paused');
+      await deps.sendMessage(task.chat_jid, msg).catch((e) =>
+        logger.error({ err: e, taskId: task.id }, 'Failed to send failure notification'),
+      );
+      return;
+    }
+
+    case 'rate-limited': {
+      // Use longer backoff for rate limits — always use max delay
+      if (retryCount <= (task.max_retries || 3)) {
+        const delay = RETRY_DELAYS[RETRY_DELAYS.length - 1];
+        logger.info({ taskId: task.id, delayMs: delay }, 'Scheduling rate-limit retry');
+        scheduleRetry(task, delay, deps);
+      } else {
+        updateTaskStatus(task.id, 'error');
+        const msg = formatFailureNotification(task, diagnosis, error, 'error');
+        await deps.sendMessage(task.chat_jid, msg).catch((e) =>
+          logger.error({ err: e, taskId: task.id }, 'Failed to send failure notification'),
+        );
+      }
+      return;
+    }
+
+    default:
+      break;
+  }
+
+  // Standard retry with exponential backoff
+  const maxRetries = task.max_retries || 3;
+  if (retryCount <= maxRetries) {
+    const delayIndex = Math.min(retryCount - 1, RETRY_DELAYS.length - 1);
+    const delay = RETRY_DELAYS[delayIndex];
+    logger.info({ taskId: task.id, retryCount, delayMs: delay }, 'Scheduling retry');
+    scheduleRetry(task, delay, deps);
+  } else {
+    // Exhausted retries
+    updateTaskStatus(task.id, 'error');
+    const msg = formatFailureNotification(task, diagnosis, error, 'error');
+    await deps.sendMessage(task.chat_jid, msg).catch((e) =>
+      logger.error({ err: e, taskId: task.id }, 'Failed to send failure notification'),
+    );
+  }
+}
+
+/**
+ * Schedule a retry via setTimeout (non-blocking).
+ */
+function scheduleRetry(
+  task: ScheduledTask,
+  delayMs: number,
+  deps: SchedulerDependencies,
+): void {
+  setTimeout(() => {
+    // Re-check task status — may have been paused/cancelled while waiting
+    const currentTask = getTaskById(task.id);
+    if (!currentTask || (currentTask.status !== 'active' && currentTask.status !== 'error')) {
+      logger.info({ taskId: task.id }, 'Retry skipped — task no longer active');
+      return;
+    }
+
+    deps.queue.enqueueTask(
+      currentTask.chat_jid,
+      currentTask.id,
+      () => runTask(currentTask, deps),
+    );
+  }, delayMs);
 }
 
 async function runTask(
@@ -49,6 +198,7 @@ async function runTask(
   );
 
   if (!group) {
+    const error = `Group not found: ${task.group_folder}`;
     logger.error(
       { taskId: task.id, groupFolder: task.group_folder },
       'Group not found for task',
@@ -59,8 +209,9 @@ async function runTask(
       duration_ms: Date.now() - startTime,
       status: 'error',
       result: null,
-      error: `Group not found: ${task.group_folder}`,
+      error,
     });
+    await handleTaskFailure(task, error, deps);
     return;
   }
 
@@ -116,9 +267,7 @@ async function runTask(
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
-          // Forward result to user (sendMessage handles formatting)
           await deps.sendMessage(task.chat_jid, streamedOutput.result);
-          // Only reset idle timer on actual results, not session-update markers
           resetIdleTimer();
         }
         if (streamedOutput.status === 'error') {
@@ -132,7 +281,6 @@ async function runTask(
     if (output.status === 'error') {
       error = output.error || 'Unknown error';
     } else if (output.result) {
-      // Messages are sent via MCP tool (IPC), result text is just logged
       result = output.result;
     }
 
@@ -156,6 +304,15 @@ async function runTask(
     result,
     error,
   });
+
+  // Handle failure with retry/diagnosis/notification
+  if (error) {
+    await handleTaskFailure(task, error, deps);
+    // Still compute next_run for the regular schedule (retry is separate)
+  } else {
+    // Success — reset retry count
+    resetTaskRetryCount(task.id);
+  }
 
   let nextRun: string | null = null;
   if (task.schedule_type === 'cron') {

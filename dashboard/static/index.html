@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NanoClaw Dashboard</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --bg-secondary: #161b22;
+      --bg-tertiary: #21262d;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --accent-hover: #79c0ff;
+      --green: #3fb950;
+      --red: #f85149;
+      --yellow: #d29922;
+      --purple: #bc8cff;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 260px;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+
+    .sidebar-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .sidebar-header h1 {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .sidebar-header .logo {
+      font-size: 24px;
+    }
+
+    .nav-section {
+      padding: 12px 0;
+    }
+
+    .nav-section-title {
+      padding: 4px 16px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      letter-spacing: 0.5px;
+    }
+
+    .nav-item {
+      padding: 8px 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: var(--text-muted);
+      transition: all 0.15s;
+    }
+
+    .nav-item:hover { background: var(--bg-tertiary); color: var(--text); }
+    .nav-item.active { background: var(--bg-tertiary); color: var(--accent); }
+    .nav-item .icon { width: 18px; text-align: center; }
+
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      display: inline-block; margin-left: auto;
+    }
+    .status-dot.online { background: var(--green); }
+    .status-dot.offline { background: var(--text-muted); }
+
+    /* Main Content */
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .topbar {
+      height: 52px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .topbar h2 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .topbar .badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: var(--bg-tertiary);
+      color: var(--text-muted);
+    }
+
+    .content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    /* Chat View */
+    .chat-container {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .message {
+      max-width: 70%;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.5;
+      word-wrap: break-word;
+    }
+
+    .message.incoming {
+      background: var(--bg-tertiary);
+      align-self: flex-start;
+      border-bottom-left-radius: 4px;
+    }
+
+    .message.outgoing {
+      background: #1a3a5c;
+      align-self: flex-end;
+      border-bottom-right-radius: 4px;
+    }
+
+    .message .sender {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 2px;
+    }
+
+    .message .time {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .chat-input {
+      padding: 16px 20px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 10px;
+    }
+
+    .chat-input input {
+      flex: 1;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-size: 14px;
+      outline: none;
+    }
+
+    .chat-input input:focus { border-color: var(--accent); }
+
+    .chat-input button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .chat-input button:hover { background: var(--accent-hover); }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-muted);
+      font-weight: 500;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    tr:hover td { background: var(--bg-secondary); }
+
+    .status-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .status-badge.active { background: rgba(63,185,80,0.15); color: var(--green); }
+    .status-badge.paused { background: rgba(210,153,34,0.15); color: var(--yellow); }
+    .status-badge.error { background: rgba(248,81,73,0.15); color: var(--red); }
+    .status-badge.completed { background: rgba(139,148,158,0.15); color: var(--text-muted); }
+
+    .btn {
+      padding: 4px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn:hover { border-color: var(--accent); color: var(--accent); }
+    .btn.danger:hover { border-color: var(--red); color: var(--red); }
+
+    .btn-group { display: flex; gap: 4px; }
+
+    /* Trust Editor */
+    .trust-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+
+    .trust-card .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .trust-card .name { font-weight: 600; }
+    .trust-card .meta { font-size: 12px; color: var(--text-muted); }
+
+    .trust-level {
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .trust-level.admin { background: rgba(188,140,255,0.15); color: var(--purple); }
+    .trust-level.operate { background: rgba(88,166,255,0.15); color: var(--accent); }
+    .trust-level.read { background: rgba(139,148,158,0.15); color: var(--text-muted); }
+
+    /* Logs */
+    .log-entry {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 12px;
+    }
+
+    .log-entry summary {
+      padding: 10px 14px;
+      cursor: pointer;
+      font-size: 13px;
+      font-family: monospace;
+    }
+
+    .log-entry pre {
+      padding: 14px;
+      font-size: 12px;
+      line-height: 1.6;
+      overflow-x: auto;
+      border-top: 1px solid var(--border);
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+    }
+
+    .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <span class="logo">🐾</span>
+      <h1>NanoClaw</h1>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-title">Gruppen</div>
+      <div id="group-nav"></div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-title">Verwaltung</div>
+      <div class="nav-item" onclick="showView('tasks')">
+        <span class="icon">📋</span> Tasks
+      </div>
+      <div class="nav-item" onclick="showView('trust')">
+        <span class="icon">🛡️</span> Trust
+      </div>
+      <div class="nav-item" onclick="showView('logs')">
+        <span class="icon">📊</span> Logs
+      </div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <h2 id="view-title">Dashboard</h2>
+      <span class="badge" id="view-badge"></span>
+    </div>
+
+    <div class="content" id="content">
+      <div class="empty-state">
+        <div class="icon">🐾</div>
+        <p>Wähle eine Gruppe oder Verwaltungsoption aus der Seitenleiste</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let currentView = null;
+    let currentJid = null;
+    let pollInterval = null;
+    let groups = [];
+
+    // API helpers
+    async function api(path, opts = {}) {
+      const res = await fetch('/api' + path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...opts,
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+      });
+      return res.json();
+    }
+
+    // Initialize
+    async function init() {
+      const data = await api('/groups');
+      groups = data;
+      renderGroupNav();
+
+      // Auto-select first group if available
+      if (groups.length > 0) {
+        showChat(groups[0].jid);
+      }
+    }
+
+    function renderGroupNav() {
+      const nav = document.getElementById('group-nav');
+      nav.innerHTML = groups.map(g => `
+        <div class="nav-item ${currentJid === g.jid ? 'active' : ''}"
+             onclick="showChat('${g.jid}')">
+          <span class="icon">💬</span>
+          ${escHtml(g.name)}
+          <span class="status-dot online"></span>
+        </div>
+      `).join('');
+    }
+
+    function escHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function formatTime(ts) {
+      const d = new Date(ts);
+      return d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function formatDate(ts) {
+      const d = new Date(ts);
+      return d.toLocaleDateString('de-DE') + ' ' + formatTime(ts);
+    }
+
+    // Views
+    async function showChat(jid) {
+      currentView = 'chat';
+      currentJid = jid;
+      const group = groups.find(g => g.jid === jid);
+
+      document.getElementById('view-title').textContent = group?.name || jid;
+      document.getElementById('view-badge').textContent = group?.folder || '';
+
+      renderGroupNav();
+      document.querySelectorAll('.nav-item').forEach(el => {
+        el.classList.toggle('active', el.textContent.trim() === group?.name);
+      });
+
+      document.getElementById('content').innerHTML = `
+        <div class="chat-container">
+          <div class="messages" id="messages"></div>
+          <div class="chat-input">
+            <input type="text" id="msg-input" placeholder="Nachricht schreiben..."
+                   onkeydown="if(event.key==='Enter')sendMsg()">
+            <button onclick="sendMsg()">Senden</button>
+          </div>
+        </div>
+      `;
+
+      await loadMessages();
+
+      // Poll for new messages
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = setInterval(loadMessages, 3000);
+    }
+
+    let lastMessageTs = '1970-01-01T00:00:00.000Z';
+
+    async function loadMessages() {
+      if (currentView !== 'chat' || !currentJid) return;
+      const msgs = await api(`/messages/${encodeURIComponent(currentJid)}?since=${encodeURIComponent(lastMessageTs)}`);
+      const container = document.getElementById('messages');
+      if (!container) return;
+
+      if (msgs.length > 0) {
+        // On first load, clear and show all; on subsequent, append new
+        if (lastMessageTs === '1970-01-01T00:00:00.000Z') {
+          container.innerHTML = '';
+        }
+
+        for (const msg of msgs) {
+          const div = document.createElement('div');
+          div.className = `message ${msg.is_from_me ? 'outgoing' : 'incoming'}`;
+          div.innerHTML = `
+            ${!msg.is_from_me ? `<div class="sender">${escHtml(msg.sender_name)}</div>` : ''}
+            <div>${escHtml(msg.content)}</div>
+            <div class="time">${formatTime(msg.timestamp)}</div>
+          `;
+          container.appendChild(div);
+        }
+        lastMessageTs = msgs[msgs.length - 1].timestamp;
+        container.scrollTop = container.scrollHeight;
+      }
+
+      if (container.children.length === 0 && lastMessageTs === '1970-01-01T00:00:00.000Z') {
+        container.innerHTML = '<div class="empty-state"><div class="icon">💬</div><p>Keine Nachrichten</p></div>';
+      }
+    }
+
+    async function sendMsg() {
+      const input = document.getElementById('msg-input');
+      const text = input.value.trim();
+      if (!text || !currentJid) return;
+
+      input.value = '';
+      await api(`/messages/${encodeURIComponent(currentJid)}`, {
+        method: 'POST',
+        body: { text },
+      });
+
+      // Append immediately
+      const container = document.getElementById('messages');
+      const div = document.createElement('div');
+      div.className = 'message outgoing';
+      div.innerHTML = `<div>${escHtml(text)}</div><div class="time">${formatTime(new Date().toISOString())}</div>`;
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    async function showView(view) {
+      currentView = view;
+      currentJid = null;
+      if (pollInterval) clearInterval(pollInterval);
+      lastMessageTs = '1970-01-01T00:00:00.000Z';
+
+      renderGroupNav();
+
+      switch (view) {
+        case 'tasks': await showTasks(); break;
+        case 'trust': await showTrust(); break;
+        case 'logs': await showLogs(); break;
+      }
+    }
+
+    async function showTasks() {
+      document.getElementById('view-title').textContent = 'Scheduled Tasks';
+      document.getElementById('view-badge').textContent = '';
+
+      const tasks = await api('/tasks');
+      const content = document.getElementById('content');
+
+      if (tasks.length === 0) {
+        content.innerHTML = '<div class="empty-state"><div class="icon">📋</div><p>Keine Tasks konfiguriert</p></div>';
+        return;
+      }
+
+      content.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Prompt</th>
+              <th>Schedule</th>
+              <th>Status</th>
+              <th>Nächster Lauf</th>
+              <th>Gruppe</th>
+              <th>Aktionen</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tasks.map(t => `
+              <tr>
+                <td title="${escHtml(t.prompt)}">${escHtml(t.prompt.slice(0, 60))}${t.prompt.length > 60 ? '...' : ''}</td>
+                <td><code>${t.schedule_type}: ${escHtml(t.schedule_value)}</code></td>
+                <td><span class="status-badge ${t.status}">${t.status}</span></td>
+                <td>${t.next_run ? formatDate(t.next_run) : '—'}</td>
+                <td>${escHtml(t.group_folder)}</td>
+                <td>
+                  <div class="btn-group">
+                    ${t.status === 'active'
+                      ? `<button class="btn" onclick="taskAction('${t.id}','pause')">⏸ Pause</button>`
+                      : t.status === 'paused'
+                        ? `<button class="btn" onclick="taskAction('${t.id}','resume')">▶ Resume</button>`
+                        : ''}
+                    <button class="btn danger" onclick="taskAction('${t.id}','delete')">🗑</button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    async function taskAction(id, action) {
+      if (action === 'delete' && !confirm('Task wirklich löschen?')) return;
+      await api(`/tasks/${id}/${action}`, { method: 'POST' });
+      await showTasks();
+    }
+
+    async function showTrust() {
+      document.getElementById('view-title').textContent = 'Trust Management';
+      document.getElementById('view-badge').textContent = '';
+
+      const config = await api('/trust');
+      const users = config.users || [];
+      const content = document.getElementById('content');
+
+      content.innerHTML = `
+        <div style="margin-bottom: 16px;">
+          <button class="btn" onclick="addTrustUser()" style="padding: 8px 16px; font-size: 14px;">
+            + User hinzufügen
+          </button>
+        </div>
+        ${users.length === 0
+          ? '<div class="empty-state"><div class="icon">🛡️</div><p>Keine vertrauenswürdigen User konfiguriert.<br>Nur der Owner hat Zugriff.</p></div>'
+          : users.map((u, i) => `
+            <div class="trust-card">
+              <div class="header">
+                <div>
+                  <span class="name">${escHtml(u.name)}</span>
+                  <span class="meta" style="margin-left: 8px;">ID: ${escHtml(u.userId)}</span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <span class="trust-level ${u.level}">${u.level}</span>
+                  <button class="btn danger" onclick="removeTrustUser(${i})">Entfernen</button>
+                </div>
+              </div>
+              <div class="meta">
+                Erteilt von: ${escHtml(u.grantedBy)} am ${formatDate(u.grantedAt)}
+                ${u.expiresAt ? ` · Läuft ab: ${formatDate(u.expiresAt)}` : ' · Permanent'}
+                ${u.note ? ` · ${escHtml(u.note)}` : ''}
+              </div>
+            </div>
+          `).join('')}
+      `;
+    }
+
+    async function addTrustUser() {
+      const userId = prompt('Discord User ID:');
+      if (!userId) return;
+      const name = prompt('Name:');
+      if (!name) return;
+      const level = prompt('Level (read/operate/admin):', 'read');
+      if (!['read', 'operate', 'admin'].includes(level)) {
+        alert('Ungültiges Level');
+        return;
+      }
+
+      const config = await api('/trust');
+      const users = config.users || [];
+      users.push({
+        userId,
+        name,
+        level,
+        grantedBy: 'dashboard',
+        grantedAt: new Date().toISOString(),
+      });
+
+      await api('/trust', { method: 'PUT', body: { users } });
+      await showTrust();
+    }
+
+    async function removeTrustUser(index) {
+      if (!confirm('User wirklich entfernen?')) return;
+      const config = await api('/trust');
+      const users = config.users || [];
+      users.splice(index, 1);
+      await api('/trust', { method: 'PUT', body: { users } });
+      await showTrust();
+    }
+
+    async function showLogs() {
+      document.getElementById('view-title').textContent = 'Container Logs';
+      document.getElementById('view-badge').textContent = '';
+
+      const content = document.getElementById('content');
+      let allLogs = [];
+
+      for (const group of groups) {
+        const logs = await api(`/logs/${group.folder}`);
+        for (const log of logs) {
+          allLogs.push({ group: group.name, ...log });
+        }
+      }
+
+      allLogs.sort((a, b) => b.name.localeCompare(a.name));
+      allLogs = allLogs.slice(0, 30);
+
+      if (allLogs.length === 0) {
+        content.innerHTML = '<div class="empty-state"><div class="icon">📊</div><p>Keine Logs vorhanden</p></div>';
+        return;
+      }
+
+      content.innerHTML = allLogs.map(log => `
+        <details class="log-entry">
+          <summary>${escHtml(log.group)} — ${escHtml(log.name)}</summary>
+          <pre>${escHtml(log.content)}</pre>
+        </details>
+      `).join('');
+    }
+
+    // Start
+    init();
+  </script>
+</body>
+</html>

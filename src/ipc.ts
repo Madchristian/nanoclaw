@@ -15,6 +15,7 @@ import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
+  sendVoice?: (jid: string, audioPath: string) => Promise<void>;
   sendMessage: (jid: string, text: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
@@ -71,7 +72,29 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (data.type === 'message' && data.chatJid && data.text) {
+              if (data.type === 'voice_message' && data.chatJid && data.audioPath) {
+                // Voice message — send audio file as attachment
+                const targetGroup = registeredGroups[data.chatJid];
+                if (
+                  isMain ||
+                  (targetGroup && targetGroup.folder === sourceGroup)
+                ) {
+                  if (deps.sendVoice) {
+                    await deps.sendVoice(data.chatJid, data.audioPath);
+                    logger.info(
+                      { chatJid: data.chatJid, sourceGroup },
+                      'IPC voice message sent',
+                    );
+                  } else {
+                    logger.warn('sendVoice not available on this channel');
+                  }
+                } else {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized IPC voice message attempt blocked',
+                  );
+                }
+              } else if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
                 if (
@@ -357,6 +380,15 @@ export async function processTaskIpc(
         break;
       }
       if (data.jid && data.name && data.folder && data.trigger) {
+        // Validate folder name to prevent path traversal
+        const folderPattern = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+        if (!folderPattern.test(data.folder) || data.folder.length > 50 || data.folder.includes('..')) {
+          logger.warn(
+            { folder: data.folder },
+            'Invalid folder name in register_group — must be lowercase alphanumeric with hyphens, max 50 chars',
+          );
+          break;
+        }
         deps.registerGroup(data.jid, {
           name: data.name,
           folder: data.folder,

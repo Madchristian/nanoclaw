@@ -39,6 +39,11 @@ const server = new McpServer({
   version: '1.0.0',
 });
 
+// Rate limiting for send_message: max 20 messages per 60 seconds
+const MESSAGE_RATE_LIMIT = 20;
+const MESSAGE_RATE_WINDOW_MS = 60_000;
+const messageTimes: number[] = [];
+
 server.tool(
   'send_message',
   "Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times. Note: when running as a scheduled task, your final output is NOT sent to the user — use this tool if you need to communicate with the user or group.",
@@ -47,6 +52,19 @@ server.tool(
     sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
   },
   async (args) => {
+    // Enforce rate limit
+    const now = Date.now();
+    while (messageTimes.length > 0 && messageTimes[0] < now - MESSAGE_RATE_WINDOW_MS) {
+      messageTimes.shift();
+    }
+    if (messageTimes.length >= MESSAGE_RATE_LIMIT) {
+      return {
+        content: [{ type: 'text' as const, text: `Rate limit exceeded: max ${MESSAGE_RATE_LIMIT} messages per minute. Wait before sending more.` }],
+        isError: true,
+      };
+    }
+    messageTimes.push(now);
+
     const data: Record<string, string | undefined> = {
       type: 'message',
       chatJid,
@@ -253,6 +271,15 @@ Use available_groups.json to find the JID for a group. The folder name should be
     if (!isMain) {
       return {
         content: [{ type: 'text' as const, text: 'Only the main group can register new groups.' }],
+        isError: true,
+      };
+    }
+
+    // Validate folder name to prevent path traversal
+    const folderPattern = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+    if (!folderPattern.test(args.folder) || args.folder.length > 50) {
+      return {
+        content: [{ type: 'text' as const, text: `Invalid folder name: "${args.folder}". Must be lowercase alphanumeric with hyphens, 1-50 chars, no leading/trailing hyphens.` }],
         isError: true,
       };
     }
