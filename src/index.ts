@@ -14,6 +14,7 @@ import {
 import { readEnvFile } from './env.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
 import { DiscordChannel } from './channels/discord.js';
+import { WebChannel } from './channels/web.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -513,6 +514,20 @@ async function main(): Promise<void> {
       botWhitelist,
     });
     logger.info({ botWhitelist }, 'Using Discord channel');
+  } else if (CHANNEL === 'web') {
+    const envSecrets = readEnvFile(['WEB_OWNER_ID']);
+    const ownerId = process.env.WEB_OWNER_ID || envSecrets.WEB_OWNER_ID || 'owner';
+    const wsPort = parseInt(process.env.WEB_WS_PORT || '3334', 10);
+    ownerUserId = ownerId;
+    channel = new WebChannel({
+      onMessage: (chatJid, msg) => storeMessage(msg),
+      onChatMetadata: (chatJid, timestamp, name) => storeChatMetadata(chatJid, timestamp, name),
+      registeredGroups: () => registeredGroups,
+      registerGroup,
+      ownerId,
+      port: wsPort,
+    });
+    logger.info({ wsPort }, 'Using Web channel (dashboard only, no external messaging)');
   } else {
     channel = new WhatsAppChannel({
       onMessage: (chatJid, msg) => storeMessage(msg),

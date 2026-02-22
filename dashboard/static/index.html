@@ -377,6 +377,8 @@
     let currentJid = null;
     let pollInterval = null;
     let groups = [];
+    let ws = null;
+    let wsConnected = false;
 
     // API helpers
     async function api(path, opts = {}) {
@@ -499,13 +501,22 @@
       if (!text || !currentJid) return;
 
       input.value = '';
-      await api(`/messages/${encodeURIComponent(currentJid)}`, {
-        method: 'POST',
-        body: { text },
-      });
+
+      // Try WebSocket first (web channel mode), fall back to HTTP API
+      const sentViaWs = sendViaWebSocket(text, currentJid);
+      if (!sentViaWs) {
+        await api(`/messages/${encodeURIComponent(currentJid)}`, {
+          method: 'POST',
+          body: { text },
+        });
+      }
 
       // Append immediately
       const container = document.getElementById('messages');
+      // Remove empty state if present
+      const empty = container.querySelector('.empty-state');
+      if (empty) empty.remove();
+
       const div = document.createElement('div');
       div.className = 'message outgoing';
       div.innerHTML = `<div>${escHtml(text)}</div><div class="time">${formatTime(new Date().toISOString())}</div>`;
@@ -685,7 +696,62 @@
       `).join('');
     }
 
+    // WebSocket for real-time communication (web channel mode)
+    function connectWebSocket() {
+      const wsPort = location.port === '3333' ? '3334' : String(parseInt(location.port) + 1);
+      ws = new WebSocket(`ws://127.0.0.1:${wsPort}`);
+
+      ws.onopen = () => {
+        wsConnected = true;
+        console.log('WebSocket connected');
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'message' && currentView === 'chat') {
+            const container = document.getElementById('messages');
+            if (!container) return;
+            // Remove empty state if present
+            const empty = container.querySelector('.empty-state');
+            if (empty) empty.remove();
+
+            const div = document.createElement('div');
+            div.className = 'message incoming';
+            div.innerHTML = `
+              <div class="sender">${escHtml(msg.sender)}</div>
+              <div>${escHtml(msg.text)}</div>
+              <div class="time">${formatTime(msg.timestamp)}</div>
+            `;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+          } else if (msg.type === 'typing') {
+            // Could show typing indicator
+          }
+        } catch {}
+      };
+
+      ws.onclose = () => {
+        wsConnected = false;
+        console.log('WebSocket disconnected, reconnecting...');
+        setTimeout(connectWebSocket, 2000);
+      };
+
+      ws.onerror = () => {
+        // Will trigger onclose
+      };
+    }
+
+    function sendViaWebSocket(text, chatJid) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'message', text, chatJid }));
+        return true;
+      }
+      return false;
+    }
+
     // Start
+    connectWebSocket();
     init();
   </script>
 </body>
